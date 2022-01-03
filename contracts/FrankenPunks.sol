@@ -40,6 +40,8 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     event ContractURIUpdated(string contractURI);
     event Finalized();
     event Withdrew(uint256 balance);
+    event SetStartingIndexBlockNumber(uint256 blockNumber, bool usedForce);
+    event SetStartingIndex(uint256 startingIndex, uint256 blockNumber);
 
     uint256 public constant MAX_SUPPLY = 10000;
     uint256 public constant RESERVED_SUPPLY = 88;
@@ -47,7 +49,17 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     uint256 public constant MINT_PRICE_END = 0.088 ether;
     string public constant TOKEN_URI_EXTENSION = ".json";
 
-    string public _provenanceHash = "";
+    /// @notice Hash which commits to the content, metadata, and original sequence of the NFTs.
+    string public _provenanceHash;
+
+    /// @notice The block number to be used to derive the starting index.
+    uint256 public _startingIndexBlockNumber;
+
+    /// @notice The starting index, chosen pseudorandomly to ensure a fair and random distribution.
+    uint256 public _startingIndex;
+
+    /// @notice Whether the starting index was set.
+    bool public _startingIndexWasSet;
 
     bool public _presaleIsActive = false;
     bool public _saleIsActive = false;
@@ -160,6 +172,44 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         _mintInner(numToMint);
     }
 
+    /**
+    * @notice Fix the starting index using the previously determined block number.
+    */
+    function setStartingIndex() external {
+        require(
+            !_startingIndexWasSet,
+            "Starting index was set"
+        );
+
+        uint256 targetBlock = _startingIndexBlockNumber;
+
+        require(
+            targetBlock != 0,
+            "Block number not set"
+        );
+
+        // If the hash for the desired block is unavailable, fall back to the most recent block.
+        if (block.number - targetBlock > 256) {
+            targetBlock = block.number - 1;
+        }
+
+        uint256 startingIndex = uint256(blockhash(targetBlock)) % MAX_SUPPLY;
+        _startingIndex = startingIndex;
+        _startingIndexWasSet = true;
+        emit SetStartingIndex(startingIndex, targetBlock);
+    }
+
+    function fallbackSetStartingIndexBlockNumber()
+        external
+        onlyOwner
+    {
+        require(
+            _startingIndexBlockNumber == 0,
+            "Block number was set"
+        );
+        _setStartingIndexBlockNumber(true);
+    }
+
     function contractURI() external view returns (string memory) {
         return _contractURI;
     }
@@ -207,5 +257,18 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         for (uint256 i = 0; i < numToMint; i++) {
             _safeMint(msg.sender, startingSupply + i);
         }
+
+        // Finalize the starting index block number when the last token is purchased.
+        if (startingSupply + numToMint == MAX_SUPPLY) {
+            _setStartingIndexBlockNumber(false);
+        }
+    }
+
+    function _setStartingIndexBlockNumber(bool usedForce) internal {
+        // Add one to make it even harder to manipulate.
+        // Ref: https://github.com/the-torn/floot#floot-seed-generation
+        uint256 blockNumber = block.number + 1;
+        _startingIndexBlockNumber = blockNumber;
+        emit SetStartingIndexBlockNumber(blockNumber, usedForce);
     }
 }
