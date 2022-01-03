@@ -18,6 +18,7 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import { ERC721Enumerable } from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+import { MerkleProof } from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
 
@@ -34,6 +35,7 @@ import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
 contract FrankenPunks is ERC721Enumerable, Ownable {
     using Strings for uint256;
 
+    event PresaleMerkleTreeUpdated(bytes32 root, bytes32 ipfsHash);
     event ProvenanceHashUpdated(string provenanceHash);
     event IsRevealedUpdated(bool isRevealed);
     event BaseURIUpdated(string baseURI);
@@ -66,6 +68,9 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     bool public _isRevealed = false;
     bool public _isFinalized = false;
 
+    /// @notice The root of the Merkle tree with addresses allowed to mint in the presale.
+    bytes32 _presaleMerkleRoot;
+
     mapping(address => uint256) public _numPresaleMints;
 
     string internal _baseTokenURI;
@@ -84,6 +89,11 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         string memory placeholderURI
     ) ERC721("FrankenPunks", "FP") {
         _placeholderURI = placeholderURI;
+    }
+
+    function setPresaleMerkleRoot(bytes32 root, bytes32 ipfsHash) external onlyOwner {
+        _presaleMerkleRoot = root;
+        emit PresaleMerkleTreeUpdated(root, ipfsHash);
     }
 
     function setProvenanceHash(string calldata provenanceHash) external onlyOwner notFinalized {
@@ -151,13 +161,30 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     /**
      * @notice Called by users to mint from the presale.
      */
-    function mintPresale(uint256 numToMint) external payable {
+    function mintPresale(
+        uint256 numToMint,
+        uint256 maxMints,
+        bytes32[] calldata merkleProof
+    ) external payable {
         require(
             _presaleIsActive,
             "Presale not active"
         );
-        // TODO: Check Merkle tree.
-        _numPresaleMints[msg.sender] += numToMint;
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, maxMints));
+        require(
+            MerkleProof.verify(merkleProof, _presaleMerkleRoot, leaf),
+            "Invalid Merkle proof"
+        );
+
+        // Require that the minter does not exceed their max allocation given by the Merkle tree.
+        uint256 newNumPresaleMints = _numPresaleMints[msg.sender] + numToMint;
+        require(
+            newNumPresaleMints <= maxMints,
+            "Presale mints exceeded"
+        );
+
+        // Update storage and do the mint.
+        _numPresaleMints[msg.sender] = newNumPresaleMints;
         _mintInner(numToMint);
     }
 
