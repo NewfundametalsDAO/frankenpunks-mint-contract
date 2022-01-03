@@ -28,18 +28,24 @@ import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
  * @notice Implements a fair and random NFT distribution, based on the Hashmasks/BAYC model.
  *
  *  Additional features include:
- *   - Merkle-tree whitelist
+ *   - Merkle-tree whitelist with customizable number of mints per address
  *   - Dutch-auction pricing
  *   - On-chain support for a pre-reveal placeholder image
+ *   - Contract-level metadata
+ *   - Finalization of metadata
  */
 contract FrankenPunks is ERC721Enumerable, Ownable {
     using Strings for uint256;
 
-    event PresaleMerkleTreeUpdated(bytes32 root, bytes32 ipfsHash);
-    event ProvenanceHashUpdated(string provenanceHash);
-    event IsRevealedUpdated(bool isRevealed);
-    event BaseURIUpdated(string baseURI);
-    event ContractURIUpdated(string contractURI);
+    event SetPresaleMerkleTree(bytes32 root, bytes32 ipfsHash);
+    event SetProvenanceHash(string provenanceHash);
+    event SetAuctionStartAndEnd(uint256 auctionStart, uint256 auctionEnd);
+    event SetPresaleIsActive(bool presaleIsActive);
+    event SetSaleIsActive(bool saleIsActive);
+    event SetIsRevealed(bool isRevealed);
+    event SetBaseURI(string baseURI);
+    event SetPlaceholderURI(string placeholderURI);
+    event SetContractURI(string contractURI);
     event Finalized();
     event Withdrew(uint256 balance);
     event SetStartingIndexBlockNumber(uint256 blockNumber, bool usedForce);
@@ -63,6 +69,8 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     /// @notice Whether the starting index was set.
     bool public _startingIndexWasSet;
 
+    uint256 public _auctionStart;
+    uint256 public _auctionEnd;
     bool public _presaleIsActive = false;
     bool public _saleIsActive = false;
     bool public _isRevealed = false;
@@ -93,39 +101,60 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
     function setPresaleMerkleRoot(bytes32 root, bytes32 ipfsHash) external onlyOwner {
         _presaleMerkleRoot = root;
-        emit PresaleMerkleTreeUpdated(root, ipfsHash);
+        emit SetPresaleMerkleTree(root, ipfsHash);
     }
 
     function setProvenanceHash(string calldata provenanceHash) external onlyOwner notFinalized {
         _provenanceHash = provenanceHash;
-        emit ProvenanceHashUpdated(provenanceHash);
+        emit SetProvenanceHash(provenanceHash);
+    }
+
+    function setAuctionStartAndEnd(uint256 auctionStart, uint256 auctionEnd) external onlyOwner {
+        require(
+            auctionStart <= auctionEnd,
+            "Start must precede end"
+        );
+        _auctionStart = auctionStart;
+        _auctionEnd = auctionEnd;
+        emit SetAuctionStartAndEnd(auctionStart, auctionEnd);
     }
 
     function setPresaleIsActive(bool presaleIsActive) external onlyOwner {
+        require(
+            !presaleIsActive || (_auctionStart != 0 && _auctionEnd != 0),
+            "Auction params must be set"
+        );
         _presaleIsActive = presaleIsActive;
+        emit SetPresaleIsActive(presaleIsActive);
     }
 
     function setSaleIsActive(bool saleIsActive) external onlyOwner {
+        require(
+            !saleIsActive || (_auctionStart != 0 && _auctionEnd != 0),
+            "Auction params must be set"
+        );
         _saleIsActive = saleIsActive;
+        emit SetSaleIsActive(saleIsActive);
     }
 
     function setIsRevealed(bool isRevealed) external onlyOwner notFinalized {
         _isRevealed = isRevealed;
-        emit IsRevealedUpdated(isRevealed);
+        emit SetIsRevealed(isRevealed);
     }
 
     function setBaseURI(string calldata baseTokenURI) external onlyOwner notFinalized {
         _baseTokenURI = baseTokenURI;
-        emit BaseURIUpdated(baseTokenURI);
+        emit SetBaseURI(baseTokenURI);
     }
 
     function setPlaceholderURI(string calldata placeholderURI) external onlyOwner {
         _placeholderURI = placeholderURI;
+        emit SetPlaceholderURI(placeholderURI);
     }
 
     function setContractURI(string calldata newContractURI) external onlyOwner {
         _contractURI = newContractURI;
-        emit ContractURIUpdated(newContractURI);
+        emit SetContractURI(newContractURI);
     }
 
     function finalize() external onlyOwner notFinalized {
@@ -135,6 +164,12 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         );
         _isFinalized = true;
         emit Finalized();
+    }
+
+    function withdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        payable(msg.sender).transfer(balance);
+        emit Withdrew(balance);
     }
 
     function mintReservedTokens(uint256 numToMint) external onlyOwner {
@@ -150,12 +185,6 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             // Note: Skip the _safeMint() logic and use regular _mint() for reserved tokens.
             _mint(msg.sender, startingSupply + i);
         }
-    }
-
-    function withdraw() external onlyOwner {
-        uint256 balance = address(this).balance;
-        payable(msg.sender).transfer(balance);
-        emit Withdrew(balance);
     }
 
     /**
@@ -257,9 +286,24 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             : "";
     }
 
+    function getCurrentPrice() public view returns (uint256) {
+        uint256 auctionStart = _auctionStart;
+        uint256 auctionEnd = _auctionEnd;
+        uint256 timestamp = block.timestamp;
+        if (auctionStart == 0 || auctionEnd == 0 || auctionStart >= timestamp) {
+            return MINT_PRICE_START;
+        }
+        if (auctionEnd <= timestamp) {
+            return MINT_PRICE_END;
+        }
+
+        // If timestamp is between start and end, interpolate to find the price.
+        uint256 progress = (timestamp - auctionStart) * 1e18 / (auctionEnd - auctionStart);
+        return MINT_PRICE_START + ((MINT_PRICE_END - MINT_PRICE_START) * progress / 1e18);
+    }
+
     function getCost(uint256 numToMint) public view returns (uint256) {
-        // TODO: dutch auction
-        return numToMint * MINT_PRICE_END;
+        return numToMint * getCurrentPrice();
     }
 
     /**
