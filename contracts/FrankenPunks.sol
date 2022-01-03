@@ -34,6 +34,12 @@ import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
 contract FrankenPunks is ERC721Enumerable, Ownable {
     using Strings for uint256;
 
+    event ProvenanceHashUpdated(string provenanceHash);
+    event IsRevealedUpdated(bool isRevealed);
+    event BaseTokenUriUpdated(string baseTokenUri);
+    event Finalized();
+    event Withdrew(uint256 balance);
+
     uint256 public constant MAX_SUPPLY = 10000;
     uint256 public constant RESERVED_SUPPLY = 88;
     uint256 public constant MINT_PRICE_START = 0.5 ether;
@@ -45,11 +51,20 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     bool public _presaleIsActive = false;
     bool public _saleIsActive = false;
     bool public _isRevealed = false;
+    bool public _isFinalized = false;
 
     mapping(address => uint256) public _numPresaleMints;
 
     string internal _baseTokenURI;
     string internal _placeholderURI;
+
+    modifier notFinalized() {
+        require(
+            !_isFinalized,
+            "Metadata is finalized"
+        );
+        _;
+    }
 
     constructor(
         string memory placeholderURI
@@ -57,8 +72,9 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         _placeholderURI = placeholderURI;
     }
 
-    function setProvenanceHash(string calldata provenanceHash) external onlyOwner {
+    function setProvenanceHash(string calldata provenanceHash) external onlyOwner notFinalized {
         _provenanceHash = provenanceHash;
+        emit ProvenanceHashUpdated(provenanceHash);
     }
 
     function setPresaleIsActive(bool presaleIsActive) external onlyOwner {
@@ -69,16 +85,27 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         _saleIsActive = saleIsActive;
     }
 
-    function setIsRevealed(bool isRevealed) external onlyOwner {
+    function setIsRevealed(bool isRevealed) external onlyOwner notFinalized {
         _isRevealed = isRevealed;
+        emit IsRevealedUpdated(isRevealed);
     }
 
-    function setBaseURI(string calldata baseTokenURI) external onlyOwner {
+    function setBaseURI(string calldata baseTokenURI) external onlyOwner notFinalized {
         _baseTokenURI = baseTokenURI;
+        emit BaseTokenUriUpdated(baseTokenURI);
     }
 
     function setPlaceholderURI(string calldata placeholderURI) external onlyOwner {
         _placeholderURI = placeholderURI;
+    }
+
+    function finalize() external onlyOwner notFinalized {
+        require(
+            _isRevealed,
+            "Must be revealed to finalize"
+        );
+        _isFinalized = true;
+        emit Finalized();
     }
 
     function mintReservedTokens(uint256 numToMint) external onlyOwner {
@@ -99,6 +126,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         payable(msg.sender).transfer(balance);
+        emit Withdrew(balance);
     }
 
     /**
