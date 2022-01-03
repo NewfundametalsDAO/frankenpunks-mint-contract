@@ -24,15 +24,16 @@ import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
 
 /**
  * @title FrankenPunks contract.
+ * @author The FrankenPunks team.
  *
  * @notice Implements a fair and random NFT distribution, based on the Hashmasks/BAYC model.
  *
  *  Additional features include:
- *   - Merkle-tree whitelist with customizable number of mints per address
- *   - Dutch-auction pricing
- *   - On-chain support for a pre-reveal placeholder image
- *   - Contract-level metadata
- *   - Finalization of metadata
+ *   - Merkle-tree whitelist with customizable number of mints per address.
+ *   - Dutch-auction pricing.
+ *   - On-chain support for a pre-reveal placeholder image.
+ *   - Contract-level metadata.
+ *   - Finalization of metadata.
  */
 contract FrankenPunks is ERC721Enumerable, Ownable {
     using Strings for uint256;
@@ -69,16 +70,28 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     /// @notice Whether the starting index was set.
     bool public _startingIndexWasSet;
 
+    /// @notice The start time, used to set the price. Does not affect whether minting is allowed.
     uint256 public _auctionStart;
+
+    /// @notice The end time, used to set the price. Does not affect whether minting is allowed.
     uint256 public _auctionEnd;
+
+    /// @notice Controls whether minting is allowed via the presale mint function.
     bool public _presaleIsActive = false;
+
+    /// @notice Controls whether minting is allowed via the regular mint function.
     bool public _saleIsActive = false;
+
+    /// @notice Whether the placeholder URI should be returned for all tokens.
     bool public _isRevealed = false;
+
+    /// @notice Whether further changes to the provenance hash and token URI have been disabled.
     bool public _isFinalized = false;
 
     /// @notice The root of the Merkle tree with addresses allowed to mint in the presale.
     bytes32 _presaleMerkleRoot;
 
+    /// @notice The number of presale mints completed by address.
     mapping(address => uint256) public _numPresaleMints;
 
     string internal _baseTokenURI;
@@ -142,9 +155,9 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         emit SetIsRevealed(isRevealed);
     }
 
-    function setBaseURI(string calldata baseTokenURI) external onlyOwner notFinalized {
-        _baseTokenURI = baseTokenURI;
-        emit SetBaseURI(baseTokenURI);
+    function setBaseURI(string calldata baseURI) external onlyOwner notFinalized {
+        _baseTokenURI = baseURI;
+        emit SetBaseURI(baseURI);
     }
 
     function setPlaceholderURI(string calldata placeholderURI) external onlyOwner {
@@ -212,8 +225,10 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             "Presale mints exceeded"
         );
 
-        // Update storage and do the mint.
+        // Update storage (do this before minting as mint recipients may have callbacks).
         _numPresaleMints[msg.sender] = newNumPresaleMints;
+
+        // Mint tokens, checking for sufficient payment and supply.
         _mintInner(numToMint);
     }
 
@@ -225,6 +240,8 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             _saleIsActive,
             "Sale not active"
         );
+
+        // Mint tokens, checking for sufficient payment and supply.
         _mintInner(numToMint);
     }
 
