@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  _______  _______  _______  _        _        _______  _          _______           _        _        _______
 (  ____ \(  ____ )(  ___  )( (    /|| \    /\(  ____ \( (    /|  (  ____ )|\     /|( (    /|| \    /\(  ____ \
@@ -10,212 +12,161 @@
 
 */
 
+pragma solidity ^0.8.9;
+
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import { ERC721Enumerable } from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+
+import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
+
 /**
-*/
-
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
-
-import "./ERC721Enumerable.sol";
-import "./Ownable.sol";
-import "./Strings.sol";
-
-/**
- * @title ERC-721 Smart Contract
+ * @title FrankenPunks contract.
+ *
+ * @notice Implements a fair and random NFT distribution, based on the Hashmasks/BAYC model.
+ *
+ *  Additional features include:
+ *   - Merkle-tree whitelist
+ *   - Dutch-auction pricing
+ *   - On-chain support for a pre-reveal placeholder image
  */
-
-/**
- * @title FrankenPunks contract
- * @dev Extends ERC721 Non-Fungible Token Standard basic implementation
- */
-contract FrankenPunks is ERC721, Ownable {
+contract FrankenPunks is ERC721Enumerable, Ownable {
     using Strings for uint256;
 
-    string public PROVENANCE = "";
-
     uint256 public constant MAX_SUPPLY = 10000;
-    uint256 public constant MAX_RESERVE_SUPPLY = 88;
-    uint256 public constant TOKEN_PRICE = 88000000000000000;
+    uint256 public constant RESERVED_SUPPLY = 88;
+    uint256 public constant MINT_PRICE_START = 0.5 ether;
+    uint256 public constant MINT_PRICE_END = 0.088 ether;
+    string public constant TOKEN_URI_EXTENSION = ".json";
 
-    uint256 public maxMints = 3;
-    uint256 public presaleMaxMints = 3;
+    string public _provenanceHash = "";
 
-    bool public saleIsActive = false;
-    bool public presaleIsActive = false;
-    bool public revealed = false;
+    bool public _presaleIsActive = false;
+    bool public _saleIsActive = false;
+    bool public _isRevealed = false;
 
-    mapping(address => bool) private presaleList;
-    mapping(address => uint256) private numOfMintsPurchased;
+    mapping(address => uint256) public _numPresaleMints;
 
-    string baseURI;
-    string private notRevealedUri;
-    string public baseExtension = ".json";
-
+    string internal _baseTokenURI;
+    string internal _placeholderURI;
 
     constructor(
-        string memory _initNotRevealedUri
-        ) ERC721("FrankenPunks", "FP") {
-          setNotRevealedURI(_initNotRevealedUri);
+        string memory placeholderURI
+    ) ERC721("FrankenPunks", "FP") {
+        _placeholderURI = placeholderURI;
     }
 
-    function setMaxMints(uint256 _maxMints) external onlyOwner {
-        maxMints = _maxMints
+    function setProvenanceHash(string calldata provenanceHash) external onlyOwner {
+        _provenanceHash = provenanceHash;
     }
 
-    function setPresaleMaxMints(uint256 _presaleMaxMints) external onlyOwner {
-        require(_presaleMaxMints <= maxMints, "Presale max mints must be less than or equal to total max mints allowed");
-
-        presaleMaxMint = _presaleMaxMint;
+    function setPresaleIsActive(bool presaleIsActive) external onlyOwner {
+        _presaleIsActive = presaleIsActive;
     }
 
-    function setPresaleState(bool _presaleState) external onlyOwner {
-        presaleActive = _presaleState;
+    function setSaleIsActive(bool saleIsActive) external onlyOwner {
+        _saleIsActive = saleIsActive;
     }
 
-    function flipPresaleState() external onlyOwner {
-        presaleActive = !presaleActive;
+    function setIsRevealed(bool isRevealed) external onlyOwner {
+        _isRevealed = isRevealed;
     }
 
-    function setSaleState(bool _saleState) external onlyOwner {
-        saleIsActive = _saleState;
+    function setBaseURI(string calldata baseTokenURI) external onlyOwner {
+        _baseTokenURI = baseTokenURI;
     }
 
-    function flipSaleState() external onlyOwner {
-        saleIsActive = !saleIsActive;
+    function setPlaceholderURI(string calldata placeholderURI) external onlyOwner {
+        _placeholderURI = placeholderURI;
     }
 
-    function addToPresaleList(address[] calldata addresses) external onlyOwner {
-        for (uint256 i = 0; i < addresses.length; i++) {
-            presaleList[addresses[i]] = true;
+    function mintReservedTokens(uint256 numToMint) external onlyOwner {
+        uint256 startingSupply = totalSupply();
 
-            if (!presalePurchases[addresses[i]]) {
-              presalePurchases[addresses[i]] = 0;
-            }
+        require(
+            startingSupply + numToMint <= RESERVED_SUPPLY,
+            "Mint would exceed reserved supply"
+        );
+
+        // Note: First token has ID #0.
+        for (uint256 i = 0; i < numToMint; i++) {
+            // Note: Skip the _safeMint() logic and use regular _mint() for reserved tokens.
+            _mint(msg.sender, startingSupply + i);
         }
     }
 
-    function removeFromPresaleList(address[] calldata addresses) external onlyOwner {
-        for (uint256 i = 0; i < addresses.length; i++) {
-            if (isOnPresaleList(addresses[i])) {
-                presaleList[addresses[i]] = false;
-            }
-        }
+    function withdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        payable(msg.sender).transfer(balance);
     }
 
-    function isOnPresaleList(address addr) external view returns (bool) {
-        return presaleList[addr];
+    /**
+     * @notice Called by users to mint from the presale.
+     */
+    function mintPresale(uint256 numToMint) external payable {
+        require(
+            _presaleIsActive,
+            "Presale not active"
+        );
+        // TODO: Check Merkle tree.
+        _numPresaleMints[msg.sender] += numToMint;
+        _mintInner(numToMint);
     }
 
-    function mintPurchasesLeft(address addr) external view returns (uint256) {
-      return maxMints - numOfMintsPurchased[addr];
+    /**
+     * @notice Called by users to mint from the main sale.
+     */
+    function mint(uint256 numToMint) external payable {
+        require(
+            _saleIsActive,
+            "Sale not active"
+        );
+        _mintInner(numToMint);
     }
 
-    function presalePurchasesLeft(address addr) external view returns (uint256) {
-        if (isOnPresaleList(addr)) {
-            return presaleMaxMints - numOfMintsPurchased[addr];
-        }
-
-        return 0;
-    }
-
-    function canAffordPurchase(uint256 _amountToMint, uint256 value) external view returns (bool) {
-        return value === TOKEN_PRICE * _amountToMint;
-    }
-
-    function doesNotExceedSupply(unit256 _amountToMint) external view returns (bool) {
-        uint256 supply = totalSupply();
-
-        return supply + _amountToMint <= MAX_SUPPLY;
-    }
-
-    function mintPresale(uint256 _amountToMint) public payable {
-        require(presaleActive, "Presale must be active to mint");
-        require(isOnPresaleList([msg.sender]), "Is not on the presale list");
-        require(_amountToMint <= presalePurchasesLeft(msg.sender), "The amount to mint exceeds the presale maximum");
-        require(canAffordPurchase(_amountToMint, msg.value), "Cannot afford to do this minting");
-        require(doesNotExceedSupply(_amountToMint), "This minting must not surpass maximum supply");
-
-        uint256 currentSupply = totalSupply();
-
-        for (uint256 i = 1; i <= _amountToMint; i++) {
-            numOfMintsPurchased[msg.sender] += 1;
-            _safeMint(msg.sender, currentSupply + i);
-        }
-    }
-
-    function mint(uint256 _amountToMint) public payable {
-        require(saleIsActive, "Sale must be active to mint");
-        require(_amountToMint <= mintPurchasesLeft(msg.sender), "Exceeds maximum minting allowed");
-        require(doesNotExceedSupply(_amountToMint), "This minting must not surpass maximum supply");
-        require(canAffordPurchase(_amountToMint, msg.value), "Cannot afford to do this minting");
-
-        uint256 currentSupply = totalSupply();
-
-        for (uint256 i = 1; i <= _amountToMint; i++) {
-           numOfMintsPurchased[msg.sender] += 1;
-            _safeMint(msg.sender, currentSupply + i);
-        }
-    }
-
-    // CHANGED: added to account for changes in openzeppelin versions
-
-
-    // CHANGED: added to account for changes in openzeppelin versions
-    function _baseURI() internal view virtual override returns (string memory) {
-        return baseURI;
-    }
-
-    function tokenURI(uint256 tokenId)
-        public
-        view
-        virtual
-        override
-        returns (string memory)
-    {
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
         require(
             _exists(tokenId),
             "ERC721Metadata: URI query for nonexistent token"
         );
 
-        if(revealed == false) {
-            return notRevealedUri;
+        if (!_isRevealed) {
+            return _placeholderURI;
         }
 
-        string memory currentBaseURI = _baseURI();
-        return bytes(currentBaseURI).length > 0
-        ? string(abi.encodePacked(currentBaseURI, tokenId.toString(), baseExtension))
-        : "";
+        string memory baseURI = _baseTokenURI;
+        return bytes(baseURI).length > 0
+            ? string(abi.encodePacked(baseURI, tokenId.toString(), TOKEN_URI_EXTENSION))
+            : "";
     }
 
-    function setProvenance(string memory provenance) public onlyOwner {
-        PROVENANCE = provenance;
+    function getCost(uint256 numToMint) public view returns (uint256) {
+        // TODO: dutch auction
+        return numToMint * MINT_PRICE_END;
     }
 
-    function reveal() public onlyOwner() {
-        revealed = true;
-    }
+    /**
+     * @dev Mints `numToMint` tokens to msg.sender.
+     *
+     *  Reverts if the max supply would be exceeded.
+     *  Reverts if the payment amount (`msg.value`) is insufficient.
+     */
+    function _mintInner(uint256 numToMint) internal {
+        uint256 startingSupply = totalSupply();
 
-    function setNotRevealedURI(string memory _notRevealedURI) public onlyOwner {
-        notRevealedUri = _notRevealedURI;
-    }
+        require(
+            startingSupply + numToMint <= MAX_SUPPLY,
+            "Mint would exceed max supply"
+        );
+        require(
+            getCost(numToMint) <= msg.value,
+            "Insufficient payment"
+        );
 
-    function setBaseURI(string memory _newBaseURI) public onlyOwner {
-        baseURI = _newBaseURI;
-    }
-
-    function reserveTokens() public onlyOwner {
-        require(doesNotExceedSupply(MAX_RESERVE_SUPPLY), "This minting must not surpass maximum supply");
-
-        uint256 currentSupply = totalSupply();
-
-        for (uint256 i = 1; i <= MAX_RESERVE_SUPPLY; i++) {
-            _safeMint(msg.sender, currentSupply + i);
+        // Note: First token has ID #0.
+        for (uint256 i = 0; i < numToMint; i++) {
+            _safeMint(msg.sender, startingSupply + i);
         }
     }
-
-    function withdraw() public onlyOwner {
-        uint balance = address(this).balance;
-        payable(msg.sender).transfer(balance);
-    }
-
 }
