@@ -1,8 +1,11 @@
 {
   "name": "fp-mint-contract",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "FrankenPunks NFT smart contract.",
+  "license": "MIT",
+  "scripts": {
+    "test": "mocha"
+  },
   "dependencies": {
     "@openzeppelin/contracts": "^4.4.1"
   },
@@ -37,9 +40,6 @@
     "ts-node": "^10.4.0",
     "typechain": "^5.2.0",
     "typescript": "^4.5.4"
-  },
-  "scripts": {
-    "test": "mocha"
   },
   "repository": {
     "type": "git",
