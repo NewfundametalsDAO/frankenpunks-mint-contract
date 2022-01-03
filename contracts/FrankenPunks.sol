@@ -36,7 +36,8 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
     event ProvenanceHashUpdated(string provenanceHash);
     event IsRevealedUpdated(bool isRevealed);
-    event BaseTokenUriUpdated(string baseTokenUri);
+    event BaseURIUpdated(string baseURI);
+    event ContractURIUpdated(string contractURI);
     event Finalized();
     event Withdrew(uint256 balance);
 
@@ -57,6 +58,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
     string internal _baseTokenURI;
     string internal _placeholderURI;
+    string internal _contractURI;
 
     modifier notFinalized() {
         require(
@@ -92,11 +94,16 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
     function setBaseURI(string calldata baseTokenURI) external onlyOwner notFinalized {
         _baseTokenURI = baseTokenURI;
-        emit BaseTokenUriUpdated(baseTokenURI);
+        emit BaseURIUpdated(baseTokenURI);
     }
 
     function setPlaceholderURI(string calldata placeholderURI) external onlyOwner {
         _placeholderURI = placeholderURI;
+    }
+
+    function setContractURI(string calldata newContractURI) external onlyOwner {
+        _contractURI = newContractURI;
+        emit ContractURIUpdated(newContractURI);
     }
 
     function finalize() external onlyOwner notFinalized {
@@ -151,6 +158,10 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             "Sale not active"
         );
         _mintInner(numToMint);
+    }
+
+    function contractURI() external view returns (string memory) {
+        return _contractURI;
     }
 
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
