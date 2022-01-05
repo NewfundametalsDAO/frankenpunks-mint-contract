@@ -14,13 +14,14 @@
 
 pragma solidity ^0.8.9;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import { ERC721Enumerable } from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import { Address } from "@openzeppelin/contracts/utils/Address.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { MerkleProof } from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
+import { Ownable } from "./lib/Ownable.sol";
 
 /**
  * @title FrankenPunks contract.
@@ -53,9 +54,11 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     event SetStartingIndex(uint256 startingIndex, uint256 blockNumber);
 
     uint256 public constant MAX_SUPPLY = 10000;
-    uint256 public constant RESERVED_SUPPLY = 88;
-    uint256 public constant MINT_PRICE_START = 0.5 ether;
-    uint256 public constant MINT_PRICE_END = 0.088 ether;
+    uint256 public constant MAX_MINT_PER_TX = 5;
+    uint256 public constant RESERVED_SUPPLY = 300;
+    uint256 public constant PRESALE_PRICE = 0.088 ether;
+    uint256 public constant AUCTION_PRICE_START = 0.5 ether;
+    uint256 public constant AUCTION_PRICE_END = 0.088 ether;
     string public constant TOKEN_URI_EXTENSION = ".json";
 
     /// @notice Hash which commits to the content, metadata, and original sequence of the NFTs.
@@ -107,8 +110,9 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     }
 
     constructor(
+        address owner,
         string memory placeholderURI
-    ) ERC721("FrankenPunks", "FP") {
+    ) ERC721("FrankenPunks", "FP") Ownable(owner) {
         _placeholderURI = placeholderURI;
     }
 
@@ -229,7 +233,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         _numPresaleMints[msg.sender] = newNumPresaleMints;
 
         // Mint tokens, checking for sufficient payment and supply.
-        _mintInner(numToMint);
+        _mintInner(numToMint, true);
     }
 
     /**
@@ -240,9 +244,13 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             _saleIsActive,
             "Sale not active"
         );
+        require(
+            numToMint <= MAX_MINT_PER_TX,
+            "numToMint too large"
+        );
 
         // Mint tokens, checking for sufficient payment and supply.
-        _mintInner(numToMint);
+        _mintInner(numToMint, false);
     }
 
     /**
@@ -303,24 +311,27 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             : "";
     }
 
-    function getCurrentPrice() public view returns (uint256) {
+    function getCurrentAuctionPrice() public view returns (uint256) {
         uint256 auctionStart = _auctionStart;
         uint256 auctionEnd = _auctionEnd;
         uint256 timestamp = block.timestamp;
         if (auctionStart == 0 || auctionEnd == 0 || auctionStart >= timestamp) {
-            return MINT_PRICE_START;
+            return AUCTION_PRICE_START;
         }
         if (auctionEnd <= timestamp) {
-            return MINT_PRICE_END;
+            return AUCTION_PRICE_END;
         }
 
         // If timestamp is between start and end, interpolate to find the price.
         uint256 progress = (timestamp - auctionStart) * 1e18 / (auctionEnd - auctionStart);
-        return MINT_PRICE_START + ((MINT_PRICE_END - MINT_PRICE_START) * progress / 1e18);
+        return AUCTION_PRICE_START + ((AUCTION_PRICE_END - AUCTION_PRICE_START) * progress / 1e18);
     }
 
-    function getCost(uint256 numToMint) public view returns (uint256) {
-        return numToMint * getCurrentPrice();
+    function getCost(uint256 numToMint, bool isPresale) public view returns (uint256) {
+        if (isPresale) {
+            return PRESALE_PRICE;
+        }
+        return numToMint * getCurrentAuctionPrice();
     }
 
     /**
@@ -329,7 +340,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
      *  Reverts if the max supply would be exceeded.
      *  Reverts if the payment amount (`msg.value`) is insufficient.
      */
-    function _mintInner(uint256 numToMint) internal {
+    function _mintInner(uint256 numToMint, bool isPresale) internal {
         uint256 startingSupply = totalSupply();
 
         require(
@@ -337,8 +348,12 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             "Mint would exceed max supply"
         );
         require(
-            getCost(numToMint) <= msg.value,
+            getCost(numToMint, isPresale) <= msg.value,
             "Insufficient payment"
+        );
+        require(
+            !Address.isContract(msg.sender),
+            "Cannot mint from a contract"
         );
 
         // Note: First token has ID #0.
