@@ -53,6 +53,14 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     event SetStartingIndexBlockNumber(uint256 blockNumber, bool usedForce);
     event SetStartingIndex(uint256 startingIndex, uint256 blockNumber);
 
+    event PresaleMint(
+        address to,
+        uint256 numToMint,
+        uint256 maxMints,
+        uint256 remainingVoucherAmount,
+        uint256 voucherAmount
+    );
+
     uint256 public constant MAX_SUPPLY = 10000;
     uint256 public constant MAX_MINT_PER_TX = 5;
     uint256 public constant RESERVED_SUPPLY = 300;
@@ -96,6 +104,10 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
     /// @notice The number of presale mints completed by address.
     mapping(address => uint256) public _numPresaleMints;
+
+    /// @notice Whether the address used the voucher amount specified in the Merkle tree.
+    ///  Note that we assume each address is only included once in the Merkle tree.
+    mapping(address => bool) public _usedVoucher;
 
     string internal _baseTokenURI;
     string internal _placeholderURI;
@@ -210,13 +222,18 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     function mintPresale(
         uint256 numToMint,
         uint256 maxMints,
+        uint256 voucherAmount,
         bytes32[] calldata merkleProof
     ) external payable {
         require(
             _presaleIsActive,
             "Presale not active"
         );
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, maxMints));
+
+        // The Merkle tree node contains: (address account, uint256 maxMints, uint256 voucherAmount)
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, maxMints, voucherAmount));
+
+        // Verify the mint params are part of the Merkle tree, given the Merkle proof.
         require(
             MerkleProof.verify(merkleProof, _presaleMerkleRoot, leaf),
             "Invalid Merkle proof"
@@ -229,11 +246,27 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             "Presale mints exceeded"
         );
 
+        // Use the voucher amount if it wasn't previously used.
+        uint256 remainingVoucherAmount = 0;
+        if (voucherAmount != 0 && !_usedVoucher[msg.sender]) {
+            remainingVoucherAmount = voucherAmount;
+            _usedVoucher[msg.sender] = true;
+        }
+
         // Update storage (do this before minting as mint recipients may have callbacks).
         _numPresaleMints[msg.sender] = newNumPresaleMints;
 
         // Mint tokens, checking for sufficient payment and supply.
-        _mintInner(numToMint, true);
+        _mintInner(numToMint, true, remainingVoucherAmount);
+
+        // Log information about presale minting for better transparency around the presale process.
+        emit PresaleMint(
+            msg.sender,
+            numToMint,
+            maxMints,
+            remainingVoucherAmount,
+            voucherAmount
+        );
     }
 
     /**
@@ -250,7 +283,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         );
 
         // Mint tokens, checking for sufficient payment and supply.
-        _mintInner(numToMint, false);
+        _mintInner(numToMint, false, 0);
     }
 
     /**
@@ -340,7 +373,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
      *  Reverts if the max supply would be exceeded.
      *  Reverts if the payment amount (`msg.value`) is insufficient.
      */
-    function _mintInner(uint256 numToMint, bool isPresale) internal {
+    function _mintInner(uint256 numToMint, bool isPresale, uint256 voucherAmount) internal {
         uint256 startingSupply = totalSupply();
 
         require(
@@ -348,7 +381,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             "Mint would exceed max supply"
         );
         require(
-            getCost(numToMint, isPresale) <= msg.value,
+            getCost(numToMint, isPresale) <= msg.value + voucherAmount,
             "Insufficient payment"
         );
         require(
