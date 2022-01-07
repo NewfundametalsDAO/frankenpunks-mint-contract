@@ -8,6 +8,13 @@ import { bufferFromHex } from "./util";
 export type MerkleTreeLeaf = [string, BigNumberish, BigNumberish];
 const LEAF_TYPES = ["address", "uint256", "uint256"];
 
+export class NotInMerkleTreeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
 export default class MerkleTree {
   public readonly leaves: MerkleTreeLeaf[];
   public readonly height: number;
@@ -46,6 +53,11 @@ export default class MerkleTree {
       this.leaves,
       ([a]) => a.toLowerCase() === address.toLowerCase()
     );
+    if (column === -1) {
+      throw new NotInMerkleTreeError(
+        `Address '${address}' is not in the Merkle tree.`
+      );
+    }
     let row = this.height - 1;
     while (row > 0) {
       if (column % 2 === 0) {
