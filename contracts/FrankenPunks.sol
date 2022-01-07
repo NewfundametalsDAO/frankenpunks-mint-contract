@@ -34,7 +34,7 @@ import { Ownable } from "./lib/Ownable.sol";
  *   - Dutch-auction pricing.
  *   - On-chain support for a pre-reveal placeholder image.
  *   - Contract-level metadata.
- *   - Finalization of metadata.
+ *   - Finalization of metadata to prevent further changes.
  */
 contract FrankenPunks is ERC721Enumerable, Ownable {
     using Strings for uint256;
@@ -149,10 +149,6 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     }
 
     function setPresaleIsActive(bool presaleIsActive) external onlyOwner {
-        require(
-            !presaleIsActive || (_auctionStart != 0 && _auctionEnd != 0),
-            "Auction params must be set"
-        );
         _presaleIsActive = presaleIsActive;
         emit SetPresaleIsActive(presaleIsActive);
     }
@@ -214,6 +210,14 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             // Note: Skip the _safeMint() logic and use regular _mint() for reserved tokens.
             _mint(msg.sender, startingSupply + i);
         }
+    }
+
+    function fallbackSetStartingIndexBlockNumber() external onlyOwner {
+        require(
+            _startingIndexBlockNumber == 0,
+            "Block number was set"
+        );
+        _setStartingIndexBlockNumber(true);
     }
 
     /**
@@ -287,8 +291,8 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     }
 
     /**
-    * @notice Fix the starting index using the previously determined block number.
-    */
+     * @notice Fix the starting index using the previously determined block number.
+     */
     function setStartingIndex() external {
         require(
             !_startingIndexWasSet,
@@ -311,17 +315,6 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         _startingIndex = startingIndex;
         _startingIndexWasSet = true;
         emit SetStartingIndex(startingIndex, targetBlock);
-    }
-
-    function fallbackSetStartingIndexBlockNumber()
-        external
-        onlyOwner
-    {
-        require(
-            _startingIndexBlockNumber == 0,
-            "Block number was set"
-        );
-        _setStartingIndexBlockNumber(true);
     }
 
     function contractURI() external view returns (string memory) {
@@ -357,12 +350,12 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
         // If timestamp is between start and end, interpolate to find the price.
         uint256 progress = (timestamp - auctionStart) * 1e18 / (auctionEnd - auctionStart);
-        return AUCTION_PRICE_START + ((AUCTION_PRICE_END - AUCTION_PRICE_START) * progress / 1e18);
+        return AUCTION_PRICE_START - ((AUCTION_PRICE_START - AUCTION_PRICE_END) * progress / 1e18);
     }
 
     function getCost(uint256 numToMint, bool isPresale) public view returns (uint256) {
         if (isPresale) {
-            return PRESALE_PRICE;
+            return numToMint * PRESALE_PRICE;
         }
         return numToMint * getCurrentAuctionPrice();
     }
