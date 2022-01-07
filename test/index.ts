@@ -24,6 +24,7 @@ import {
   merkleTreeFromCompactData,
   RankInfo,
 } from "../src/whitelist/loadWhitelist";
+import { RANKS_FROM_WORST_TO_BEST } from "../src/constants";
 
 // Test parameters.
 const RUN_END_TO_END_LIFECYCLE_TEST = false;
@@ -35,12 +36,6 @@ const ZERO_BYTES =
 const MOCK_IPFS_HASH = ZERO_BYTES;
 const MOCK_PROVENANCE_HASH = "mock-provenance-hash";
 const PLACEHOLDER_URI = "https://example.com";
-
-const RANKS_FROM_WORST_TO_BEST: RankInfo[] = [
-  ["data/peasants.csv", 2, 0],
-  ["data/citizens.csv", 3, 0],
-  ["data/governors.csv", 3, ethers.utils.parseEther("0.088")],
-];
 
 describe("FrankenPunks", function () {
   // EVM snapshot.

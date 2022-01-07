@@ -2,17 +2,13 @@
 
 import fs from "fs";
 import { ethers } from "hardhat";
+import { RANKS_FROM_WORST_TO_BEST } from "../src/constants";
 import {
   constructPresaleCompactData,
   merkleTreeFromCompactData,
   RankInfo,
 } from "../src/whitelist/loadWhitelist";
 
-const RANKS_FROM_WORST_TO_BEST: RankInfo[] = [
-  ["data/peasants.csv", 2, 0],
-  ["data/citizens.csv", 3, 0],
-  ["data/governors.csv", 3, ethers.utils.parseEther("0.088")],
-];
 const OUT_FILE_PATH = "data/merkle.json";
 
 async function main() {
