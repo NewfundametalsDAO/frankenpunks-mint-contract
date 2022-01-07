@@ -16,17 +16,27 @@ async function main() {
   // TODO: Update before using on mainnet.
   const FrankenPunks = await ethers.getContractFactory("FrankenPunks");
   const contract = await FrankenPunks.attach(RINKEBY_CONTRACT);
+
   const reservedSupply = (await contract.RESERVED_SUPPLY()).toNumber();
   await wait(contract.mintReservedTokens(reservedSupply / 2));
   await wait(contract.mintReservedTokens(reservedSupply / 2));
   console.log("Minted tokens:", contract.totalSupply());
+
   await wait(contract.setProvenanceHash("mock-provenance-hash"));
   console.log("Set provenance hash");
+
   const tree = merkleTreeFromCompactData(merkleData, RANKS_FROM_WORST_TO_BEST);
   await wait(contract.setPresaleMerkleRoot(tree.getRoot(), MOCK_IPFS_HASH));
   console.log("Set Merkle root");
+
   await wait(contract.setPresaleIsActive(true));
   console.log("Activated presale");
+
+  const start = (await ethers.provider.getBlock("latest")).timestamp;
+  const end = start + 60 * 60 * 24 * 7; // 7 days
+  await wait(contract.setAuctionStartAndEnd(start, end));
+  console.log("Set auction start and end");
+
   await wait(contract.setSaleIsActive(true));
   console.log("Activated sale");
 }
