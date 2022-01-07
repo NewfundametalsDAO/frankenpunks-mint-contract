@@ -33,6 +33,9 @@ const config: HardhatUserConfig = {
       },
     ],
   },
+  mocha: {
+    timeout: 0,
+  },
   networks: {
     rinkeby: {
       url: process.env.RINKEBY_URL || "",
