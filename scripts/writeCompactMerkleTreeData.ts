@@ -21,7 +21,7 @@ async function main() {
   // Also, test making a tree from the data and calculating the root.
   console.log("\n==== Creating Merkle tree and calculating root... ====");
   const tree = merkleTreeFromCompactData(data, RANKS_FROM_WORST_TO_BEST);
-  console.log(tree.getRoot().toString("hex"));
+  console.log(`0x${tree.getRoot().toString("hex")}`);
   console.log("==== Complete. ====\n");
 }
 
