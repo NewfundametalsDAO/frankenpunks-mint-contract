@@ -20,14 +20,22 @@ function readAddressesFromFile(fileName: string): string[] {
     lines.pop();
   }
 
-  // Parsing.
-  const addresses = lines.map((line) => line.split(",")[0]);
+  // Parsing. Expect an address at the start of every line.
+  const addresses = lines.map((line, i) => {
+    const match = line.match(/\w+/);
+    if (!match) {
+      throw new Error(`Empty line on line ${i}`);
+    }
+    return match[0];
+  });
 
   // Validation.
   addresses.forEach((address, i) => {
     if (!ethers.utils.isAddress(address)) {
       throw new Error(
-        `Not an address (${fileName} line ${i + 1}): '${address}'`
+        `Not an address (${fileName} line ${i + 1}): '${address}' (length ${
+          address.length
+        })`
       );
     }
   });
