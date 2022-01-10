@@ -100,7 +100,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     bool public _isFinalized = false;
 
     /// @notice The root of the Merkle tree with addresses allowed to mint in the presale.
-    bytes32 _presaleMerkleRoot;
+    bytes32 public _presaleMerkleRoot;
 
     /// @notice The number of presale mints completed by address.
     mapping(address => uint256) public _numPresaleMints;
