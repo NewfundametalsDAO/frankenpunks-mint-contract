@@ -1,4 +1,10 @@
-// npx hardhat run scripts/updateMerkleRoot.ts
+/**
+ * Update the Merkle root on-chain.
+ *
+ * You should first calculate the root using the writeCompactMerkleTreeData.ts script.
+ *
+ * Usage: npx hardhat run scripts/updateMerkleRoot.ts
+ */
 
 import { ContractReceipt, ContractTransaction } from "ethers";
 import { ethers } from "hardhat";
