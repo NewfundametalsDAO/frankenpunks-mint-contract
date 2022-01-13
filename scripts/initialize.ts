@@ -9,8 +9,6 @@ import { merkleTreeFromCompactData } from "../src/whitelist/loadWhitelist";
 
 // TODO: Update before using on mainnet.
 const RINKEBY_CONTRACT = "0x3a2B010392a31db290392057173917ABd8181958";
-const MOCK_IPFS_HASH =
-  "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 async function main() {
   // TODO: Update before using on mainnet.
@@ -26,7 +24,7 @@ async function main() {
   console.log("Set provenance hash");
 
   const tree = merkleTreeFromCompactData(merkleData, RANKS_FROM_WORST_TO_BEST);
-  await wait(contract.setPresaleMerkleRoot(tree.getRoot(), MOCK_IPFS_HASH));
+  await wait(contract.setPresaleMerkleRoot(tree.getRoot()));
   console.log("Set Merkle root");
 
   await wait(contract.setPresaleIsActive(true));

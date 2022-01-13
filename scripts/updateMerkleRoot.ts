@@ -8,7 +8,6 @@
 
 import { ContractReceipt, ContractTransaction } from "ethers";
 import { ethers } from "hardhat";
-import { MOCK_IPFS_HASH } from "../src/constants";
 
 async function main() {
   if (!process.env.FP_ADDRESS) {
@@ -22,7 +21,7 @@ async function main() {
 
   const FrankenPunks = await ethers.getContractFactory("FrankenPunks");
   const contract = await FrankenPunks.attach(fpAddress);
-  await wait(contract.setPresaleMerkleRoot(merkleRoot, MOCK_IPFS_HASH));
+  await wait(contract.setPresaleMerkleRoot(merkleRoot));
   console.log(`Merkle root updated: ${merkleRoot}`);
 }
 
