@@ -22,7 +22,6 @@ import {
 } from "./util";
 import {
   merkleTreeFromCompactData,
-  RankInfo,
 } from "../src/whitelist/loadWhitelist";
 import { RANKS_FROM_WORST_TO_BEST } from "../src/constants";
 
@@ -33,7 +32,6 @@ const MAX_TREE_SIZE_TO_TEST = 9;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const ZERO_BYTES =
   "0x0000000000000000000000000000000000000000000000000000000000000000";
-const MOCK_IPFS_HASH = ZERO_BYTES;
 const MOCK_PROVENANCE_HASH = "mock-provenance-hash";
 const PLACEHOLDER_URI = "https://example.com";
 
@@ -66,7 +64,8 @@ describe("FrankenPunks", function () {
     [deployer, user, owner] = accounts;
 
     const factory = await ethers.getContractFactory("FrankenPunks");
-    contract = await factory.deploy(owner.address, PLACEHOLDER_URI);
+    contract = await factory.deploy(PLACEHOLDER_URI);
+    await (await contract.transferOwnership(owner.address)).wait();
     contractAsUser = contract.connect(user);
     contractAsOwner = contract.connect(owner);
     await contract.deployed();
@@ -94,10 +93,7 @@ describe("FrankenPunks", function () {
 
   describe("owner functions", function () {
     it("setPresaleMerkleRoot", async function () {
-      await contractAsOwner.setPresaleMerkleRoot(
-        presaleTree.getRoot(),
-        MOCK_IPFS_HASH
-      );
+      await contractAsOwner.setPresaleMerkleRoot(presaleTree.getRoot());
     });
 
     it("setProvenanceHash", async function () {
@@ -262,10 +258,7 @@ describe("FrankenPunks", function () {
     beforeEach(async function () {
       // Initial setup: activate the presale and use the default presale tree.
       await contractAsOwner.setPresaleIsActive(true);
-      await contractAsOwner.setPresaleMerkleRoot(
-        presaleTree.getRoot(),
-        MOCK_IPFS_HASH
-      );
+      await contractAsOwner.setPresaleMerkleRoot(presaleTree.getRoot());
     });
 
     it("successfully mints from the presale Merkle tree", async function () {
@@ -329,7 +322,7 @@ describe("FrankenPunks", function () {
     });
 
     it("cannot mint if Merkle root is not set", async function () {
-      await contractAsOwner.setPresaleMerkleRoot(ZERO_BYTES, MOCK_IPFS_HASH);
+      await contractAsOwner.setPresaleMerkleRoot(ZERO_BYTES);
       await expect(
         contract.mintPresale(1, 1, 0, presaleTree.getProof(addrs[0]), {
           value: presalePrice,
@@ -343,10 +336,7 @@ describe("FrankenPunks", function () {
         // Different second leaf.
         [addrs[1], 1, 0],
       ]);
-      await contractAsOwner.setPresaleMerkleRoot(
-        newTree.getRoot(),
-        MOCK_IPFS_HASH
-      );
+      await contractAsOwner.setPresaleMerkleRoot(newTree.getRoot());
       await expect(
         contract.mintPresale(1, 1, 0, presaleTree.getProof(addrs[0]), {
           value: presalePrice,
@@ -389,7 +379,7 @@ describe("FrankenPunks", function () {
         // Set up the tree.
         const tree = new MerkleTree(leaves.slice(0, n));
         const root = tree.getRoot();
-        await contractAsOwner.setPresaleMerkleRoot(root, MOCK_IPFS_HASH);
+        await contractAsOwner.setPresaleMerkleRoot(root);
 
         // Pick a random mint order.
         const mintOrder = _.shuffle(_.range(n));
@@ -804,14 +794,15 @@ describe("FrankenPunks", function () {
         RANKS_FROM_WORST_TO_BEST
       );
       ownerTxes.push(
-        await contractAsOwner.setPresaleMerkleRoot(
-          tree.getRoot(),
-          MOCK_IPFS_HASH
-        )
+        await contractAsOwner.setPresaleMerkleRoot(tree.getRoot()),
       );
       ownerTxes.push(await contractAsOwner.setPresaleIsActive(true));
       console.log("Started the presale.");
 
+      const governorRankInfo = RANKS_FROM_WORST_TO_BEST[2];
+      const citizenRankInfo = RANKS_FROM_WORST_TO_BEST[1];
+      const peasantRankInfo = RANKS_FROM_WORST_TO_BEST[0];
+      
       // Mint from all the governors.
       // The governors can mint at most 3 during the presale, with 1 free mint.
       const governors = _.shuffle(merkleData[2]);
@@ -822,7 +813,7 @@ describe("FrankenPunks", function () {
         const value = presalePrice.mul(mintAmount - 1);
         const tx = await contract
           .connect(await impersonateAndSendFunds(address))
-          .mintPresale(mintAmount, 3, presalePrice, proof, {
+          .mintPresale(mintAmount, governorRankInfo[1], governorRankInfo[2], proof, {
             value,
           });
 
@@ -850,7 +841,7 @@ describe("FrankenPunks", function () {
         const value = presalePrice.mul(mintAmount);
         const tx = await contract
           .connect(await impersonateAndSendFunds(address))
-          .mintPresale(mintAmount, 3, 0, proof, {
+          .mintPresale(mintAmount, citizenRankInfo[1], citizenRankInfo[2], proof, {
             value,
           });
 
@@ -877,7 +868,7 @@ describe("FrankenPunks", function () {
         const value = presalePrice.mul(mintAmount);
         const tx = await contract
           .connect(await impersonateAndSendFunds(address))
-          .mintPresale(mintAmount, 2, 0, proof, {
+          .mintPresale(mintAmount, peasantRankInfo[1], peasantRankInfo[2], proof, {
             value,
           });
 
@@ -1036,6 +1027,76 @@ describe("FrankenPunks", function () {
         "Owner txes:",
         ownerReceipts.map((receipt) => receipt.gasUsed.toString())
       );
+    });
+  });
+
+  describe("walletOfOwner()", function () {
+    it("returns the token IDs owned by a given address", async function () {
+      // Start by minting reserved supply.
+      const reservedSupply = (await contract.RESERVED_SUPPLY()).toNumber();
+      await contractAsOwner.mintReservedTokens(reservedSupply / 2);
+      await contractAsOwner.mintReservedTokens(reservedSupply / 2);
+
+      // Start the public sale.
+      const nowSeconds = (await ethers.provider.getBlock("latest")).timestamp;
+      const start = nowSeconds + 60 * 60; // 1 hour
+      const end = start + 60 * 60 * 24; // 24 hours
+      await contractAsOwner.setAuctionStartAndEnd(start, end);
+      await contractAsOwner.setSaleIsActive(true);
+
+      // Get two buyers.
+      const [buyer1, buyer2] = accounts.slice(3, 5);
+      
+      // Mint some tokens from the public sale.
+      for (let i = 0; i < 5; i++) {
+        // Alternate buying tokens from each address.
+        await contract.connect(buyer1).mint(2, { value: auctionPriceStart.mul(2) });
+        await contract.connect(buyer2).mint(1, { value: auctionPriceStart.mul(2) });
+      }
+
+      // Verify the query.
+      expect(await contract.walletOfOwner(owner.address)).to.deep.equal(_.range(reservedSupply).map(n => BigNumber.from(n)));
+      expect(await contract.walletOfOwner(buyer1.address)).to.deep.equal([
+        reservedSupply,
+        reservedSupply + 1,
+        reservedSupply + 3,
+        reservedSupply + 4,
+        reservedSupply + 6,
+        reservedSupply + 7,
+        reservedSupply + 9,
+        reservedSupply + 10,
+        reservedSupply + 12,
+        reservedSupply + 13,
+      ].map(n => BigNumber.from(n)));
+      expect(await contract.walletOfOwner(buyer2.address)).to.deep.equal([
+        reservedSupply + 2,
+        reservedSupply + 5,
+        reservedSupply + 8,
+        reservedSupply + 11,
+        reservedSupply + 14,
+      ].map(n => BigNumber.from(n)));
+    });
+  });
+
+  describe("ERC-2981 royaltyInfo()", function () {
+    it("returns royalty info set by the owner", async function () {
+      const salePrice = ethers.utils.parseEther("0.5");
+      expect(await contract.royaltyInfo(0, salePrice)).to.deep.equal([ZERO_ADDRESS, BigNumber.from(0)]);
+
+      const twoPercent = ethers.utils.parseEther("0.02");
+      await contractAsOwner.setRoyaltyInfo(owner.address, twoPercent);
+
+      expect(await contract.royaltyInfo(0, salePrice)).to.deep.equal([owner.address, BigNumber.from(ethers.utils.parseEther("0.01"))]);
+      expect(await contract.royaltyInfo(0, salePrice.mul(5))).to.deep.equal([owner.address, BigNumber.from(ethers.utils.parseEther("0.05"))]);
+    });
+  });
+
+  describe("ERC-165 supportsInterface()", function () {
+    it("returns true for supported interfaces", async function () {
+      expect(await contract.supportsInterface("0x80ac58cd")).to.equal(true); // ERC-271
+      expect(await contract.supportsInterface("0x80ac58ce")).to.equal(false);
+      expect(await contract.supportsInterface("0x2a55205a")).to.equal(true); // ERC-2981
+      expect(await contract.supportsInterface("0x2a55205b")).to.equal(false);
     });
   });
 

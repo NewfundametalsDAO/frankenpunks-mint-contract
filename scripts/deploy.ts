@@ -8,8 +8,9 @@ const RINKEBY_OWNER = "0x6618683a785bb92d95Ded06841297FB3eE9a4c55";
 
 async function main() {
   const FrankenPunks = await ethers.getContractFactory("FrankenPunks");
-  const contract = await FrankenPunks.deploy(RINKEBY_OWNER, PLACEHOLDER_URI);
+  const contract = await FrankenPunks.deploy(PLACEHOLDER_URI);
   await contract.deployed();
+  await (await contract.transferOwnership(RINKEBY_OWNER)).wait();
   console.log("FrankenPunks deployed to:", contract.address);
 }
 

@@ -14,14 +14,11 @@
 
 pragma solidity ^0.8.9;
 
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import { ERC721Enumerable } from "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import { Address } from "@openzeppelin/contracts/utils/Address.sol";
 import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { MerkleProof } from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
-
-import { ERC721EnumerableOptimized } from "./lib/ERC721EnumerableOptimized.sol";
-import { Ownable } from "./lib/Ownable.sol";
 
 /**
  * @title FrankenPunks contract.
@@ -36,30 +33,23 @@ import { Ownable } from "./lib/Ownable.sol";
  *   - Contract-level metadata.
  *   - Finalization of metadata to prevent further changes.
  */
-contract FrankenPunks is ERC721Enumerable, Ownable {
+contract FrankenPunks is ERC721, Ownable {
     using Strings for uint256;
 
-    event SetPresaleMerkleTree(bytes32 root, bytes32 ipfsHash);
+    event SetPresaleMerkleRoot(bytes32 root);
     event SetProvenanceHash(string provenanceHash);
     event SetAuctionStartAndEnd(uint256 auctionStart, uint256 auctionEnd);
     event SetPresaleIsActive(bool presaleIsActive);
     event SetSaleIsActive(bool saleIsActive);
     event SetIsRevealed(bool isRevealed);
+    event Finalized();
+    event SetRoyaltyInfo(address royaltyRecipient, uint256 royaltyAmountNumerator);
+    event SetStartingIndexBlockNumber(uint256 blockNumber, bool usedForce);
+    event SetStartingIndex(uint256 startingIndex, uint256 blockNumber);
     event SetBaseURI(string baseURI);
     event SetPlaceholderURI(string placeholderURI);
     event SetContractURI(string contractURI);
-    event Finalized();
     event Withdrew(uint256 balance);
-    event SetStartingIndexBlockNumber(uint256 blockNumber, bool usedForce);
-    event SetStartingIndex(uint256 startingIndex, uint256 blockNumber);
-
-    event PresaleMint(
-        address to,
-        uint256 numToMint,
-        uint256 maxMints,
-        uint256 remainingVoucherAmount,
-        uint256 voucherAmount
-    );
 
     uint256 public constant MAX_SUPPLY = 10000;
     uint256 public constant MAX_MINT_PER_TX = 5;
@@ -68,18 +58,14 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     uint256 public constant AUCTION_PRICE_START = 0.5 ether;
     uint256 public constant AUCTION_PRICE_END = 0.088 ether;
     string public constant TOKEN_URI_EXTENSION = ".json";
+    uint256 public constant ROYALTY_AMOUNT_DENOMINATOR = 1e18;
+    bytes4 private constant INTERFACE_ID_ERC2981 = 0x2a55205a;
+
+    /// @notice The root of the Merkle tree with addresses allowed to mint in the presale.
+    bytes32 public _presaleMerkleRoot;
 
     /// @notice Hash which commits to the content, metadata, and original sequence of the NFTs.
     string public _provenanceHash;
-
-    /// @notice The block number to be used to derive the starting index.
-    uint256 public _startingIndexBlockNumber;
-
-    /// @notice The starting index, chosen pseudorandomly to ensure a fair and random distribution.
-    uint256 public _startingIndex;
-
-    /// @notice Whether the starting index was set.
-    bool public _startingIndexWasSet;
 
     /// @notice The start time, used to set the price. Does not affect whether minting is allowed.
     uint256 public _auctionStart;
@@ -99,8 +85,11 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     /// @notice Whether further changes to the provenance hash and token URI have been disabled.
     bool public _isFinalized = false;
 
-    /// @notice The root of the Merkle tree with addresses allowed to mint in the presale.
-    bytes32 public _presaleMerkleRoot;
+    /// @notice The recipient of ERC-2981 royalties.
+    address public _royaltyRecipient;
+
+    /// @notice The royalty rate for ERC-2981 royalties, as a fraction of ROYALTY_AMOUNT_DENOMINATOR.
+    uint256 public _royaltyAmountNumerator;
 
     /// @notice The number of presale mints completed by address.
     mapping(address => uint256) public _numPresaleMints;
@@ -109,9 +98,20 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     ///  Note that we assume each address is only included once in the Merkle tree.
     mapping(address => bool) public _usedVoucher;
 
+    /// @notice The block number to be used to derive the starting index.
+    uint256 public _startingIndexBlockNumber;
+
+    /// @notice The starting index, chosen pseudorandomly to ensure a fair and random distribution.
+    uint256 public _startingIndex;
+
+    /// @notice Whether the starting index was set.
+    bool public _startingIndexWasSet;
+
     string internal _baseTokenURI;
     string internal _placeholderURI;
     string internal _contractURI;
+
+    uint256 internal _totalSupply;
 
     modifier notFinalized() {
         require(
@@ -122,15 +122,14 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     }
 
     constructor(
-        address owner,
         string memory placeholderURI
-    ) ERC721("FrankenPunks", "FP") Ownable(owner) {
+    ) ERC721("FrankenPunks", "FP") {
         _placeholderURI = placeholderURI;
     }
 
-    function setPresaleMerkleRoot(bytes32 root, bytes32 ipfsHash) external onlyOwner {
+    function setPresaleMerkleRoot(bytes32 root) external onlyOwner {
         _presaleMerkleRoot = root;
-        emit SetPresaleMerkleTree(root, ipfsHash);
+        emit SetPresaleMerkleRoot(root);
     }
 
     function setProvenanceHash(string calldata provenanceHash) external onlyOwner notFinalized {
@@ -167,6 +166,21 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         emit SetIsRevealed(isRevealed);
     }
 
+    function finalize() external onlyOwner notFinalized {
+        require(
+            _isRevealed,
+            "Must be revealed to finalize"
+        );
+        _isFinalized = true;
+        emit Finalized();
+    }
+
+    function setRoyaltyInfo(address royaltyRecipient, uint256 royaltyAmountNumerator) external onlyOwner {
+        _royaltyRecipient = royaltyRecipient;
+        _royaltyAmountNumerator = royaltyAmountNumerator;
+        emit SetRoyaltyInfo(royaltyRecipient, royaltyAmountNumerator);
+    }
+
     function setBaseURI(string calldata baseURI) external onlyOwner notFinalized {
         _baseTokenURI = baseURI;
         emit SetBaseURI(baseURI);
@@ -182,15 +196,6 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         emit SetContractURI(newContractURI);
     }
 
-    function finalize() external onlyOwner notFinalized {
-        require(
-            _isRevealed,
-            "Must be revealed to finalize"
-        );
-        _isFinalized = true;
-        emit Finalized();
-    }
-
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         payable(msg.sender).transfer(balance);
@@ -198,16 +203,19 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
     }
 
     function mintReservedTokens(uint256 numToMint) external onlyOwner {
-        uint256 startingSupply = totalSupply();
+        uint256 startingSupply = _totalSupply;
 
         require(
             startingSupply + numToMint <= RESERVED_SUPPLY,
             "Mint would exceed reserved supply"
         );
 
+        // Update the total supply.
+        _totalSupply = startingSupply + numToMint;
+
         // Note: First token has ID #0.
         for (uint256 i = 0; i < numToMint; i++) {
-            // Note: Skip the _safeMint() logic and use regular _mint() for reserved tokens.
+            // Use _mint() instead of _safeMint() since we won't mint to contracts.
             _mint(msg.sender, startingSupply + i);
         }
     }
@@ -262,15 +270,6 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
 
         // Mint tokens, checking for sufficient payment and supply.
         _mintInner(numToMint, true, remainingVoucherAmount);
-
-        // Log information about presale minting for better transparency around the presale process.
-        emit PresaleMint(
-            msg.sender,
-            numToMint,
-            maxMints,
-            remainingVoucherAmount,
-            voucherAmount
-        );
     }
 
     /**
@@ -317,6 +316,42 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         emit SetStartingIndex(startingIndex, targetBlock);
     }
 
+    /**
+     * @notice Query tokens owned by an address, in a given range.
+     *
+     * Adapted from Nanopass: https://etherscan.io/address/0xf54cc94f1f2f5de012b6aa51f1e7ebdc43ef5afc#code
+     */
+    function tokensOfOwner(address owner, uint256 startId, uint256 endId) external view returns(uint256[] memory) {
+        uint256 tokenCount = balanceOf(owner);
+        uint256[] memory ownerTokens = new uint256[](tokenCount);
+        uint256 ownerIndex = 0;
+        for (uint256 tokenId = startId; tokenId < endId; tokenId++) {
+            if (ownerIndex == tokenCount) break;
+
+            if (ownerOf(tokenId) == owner) {
+                ownerTokens[ownerIndex] = tokenId;
+                ownerIndex++;
+            }
+        }
+        return ownerTokens;
+    }
+
+    /**
+     * @notice Query all tokens owned by an address.
+     *
+     * Adapted from Nanopass: https://etherscan.io/address/0xf54cc94f1f2f5de012b6aa51f1e7ebdc43ef5afc#code
+     */
+    function walletOfOwner(address owner) external view returns(uint256[] memory) {
+        return this.tokensOfOwner(owner, 0, _totalSupply);
+    }
+
+    /**
+     * @notice Implements ERC-2981 royalty info interface.
+     */
+    function royaltyInfo(uint256 /* tokenId */, uint256 salePrice) external view returns (address, uint256) {
+        return (_royaltyRecipient, salePrice * _royaltyAmountNumerator / ROYALTY_AMOUNT_DENOMINATOR);
+    }
+
     function contractURI() external view returns (string memory) {
         return _contractURI;
     }
@@ -335,6 +370,17 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
         return bytes(baseURI).length > 0
             ? string(abi.encodePacked(baseURI, tokenId.toString(), TOKEN_URI_EXTENSION))
             : "";
+    }
+    
+    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
+        return (
+            interfaceId == INTERFACE_ID_ERC2981 ||
+            super.supportsInterface(interfaceId)
+        );
+    }
+
+    function totalSupply() public view returns (uint256) {
+        return _totalSupply;
     }
 
     function getCurrentAuctionPrice() public view returns (uint256) {
@@ -367,7 +413,7 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
      *  Reverts if the payment amount (`msg.value`) is insufficient.
      */
     function _mintInner(uint256 numToMint, bool isPresale, uint256 voucherAmount) internal {
-        uint256 startingSupply = totalSupply();
+        uint256 startingSupply = _totalSupply;
 
         require(
             startingSupply + numToMint <= MAX_SUPPLY,
@@ -382,14 +428,23 @@ contract FrankenPunks is ERC721Enumerable, Ownable {
             "Cannot mint from a contract"
         );
 
+        // Update the total supply.
+        _totalSupply = startingSupply + numToMint;
+
         // Note: First token has ID #0.
         for (uint256 i = 0; i < numToMint; i++) {
-            _safeMint(msg.sender, startingSupply + i);
+            // Use _mint() instead of _safeMint() since we won't mint to contracts.
+            _mint(msg.sender, startingSupply + i);
         }
 
         // Finalize the starting index block number when the last token is purchased.
         if (startingSupply + numToMint == MAX_SUPPLY) {
-            _setStartingIndexBlockNumber(false);
+            // NOTE: Do not set the starting index block automatically if the provenance has is not published!
+            // If the provenance hash is not ready by the end of the sale, then the block number can be set
+            // with fallbackSetStartingIndexBlockNumber(), which is also fine.
+            if (bytes(_provenanceHash).length != 0) {
+                _setStartingIndexBlockNumber(false);
+            }
         }
     }
 
